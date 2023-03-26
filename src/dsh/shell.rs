@@ -13,14 +13,31 @@ impl dsh {
     }
 
     fn execute_shell_command(&self, command: &str, args: SplitWhitespace) -> bool {
-        let shell_cmd = std::process::Command::new(command).args(args).spawn();
-        match shell_cmd {
-            Ok(mut child) => {
-                child.wait().unwrap();
-                true
+        if cfg!(target_os = "windows") {
+            let shell_cmd = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg(command)
+                .args(args)
+                .spawn();
+            match shell_cmd {
+                Ok(mut child) => {
+                    child.wait().unwrap();
+                    true
+                }
+                Err(_) => false,
             }
-            Err(_) => {
-                false
+        } else {
+            let shell_cmd = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .args(args)
+                .spawn();
+            match shell_cmd {
+                Ok(mut child) => {
+                    child.wait().unwrap();
+                    true
+                }
+                Err(_) => false,
             }
         }
     }
@@ -33,25 +50,15 @@ impl dsh {
         let mut args = input.split_whitespace();
         let command = args.next().unwrap();
 
-        let mut executed = false;
-
-        for cmd in &self.commands {
-            if cmd.get_aliases().contains(command) {
-                cmd.execute();
-                executed = true;
-                break;
+        match self.get_command(command) {
+            Some(cmd) => {
+                cmd.execute(self, args.clone().collect());
             }
-        }
-
-        // if the command was not found, run it as a shell command
-        if !executed {
-            if self.execute_shell_command(command, args) {
-                executed = true;
+            None => {
+                if !self.execute_shell_command(command, args) {
+                    println!("dsh: command not found: {}", command);
+                }
             }
-        }
-
-        if !executed {
-            println!("dsh: command not found: {}", command);
         }
     }
 
@@ -59,10 +66,20 @@ impl dsh {
         self.commands.push(command);
     }
 
+    pub fn get_command(&self, command: &str) -> Option<&Box<dyn Command>> {
+        for cmd in &self.commands {
+            if cmd.get_aliases().contains(command) {
+                return Some(cmd);
+            }
+        }
+
+        None
+    }
+
     ///
     /// dsh.loop - main loop of the shell, reads input and executes commands
     ///
-    pub fn dsh_loop(self) {
+    pub fn dsh_loop(&self) {
         let mut input = String::new();
 
         loop {
